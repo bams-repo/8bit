@@ -371,7 +371,7 @@ vector<COutput> CActiveMasternode::SelectCoinsMasternode()
     // Filter
     BOOST_FOREACH(const COutput& out, vCoins)
     {
-        if(out.tx->vout[out.i].nValue == 112*COIN) { //exactly
+        if(out.tx->vout[out.i].nValue == RELAUNCH_MN_COLLATERAL) {
         	filteredCoins.push_back(out);
         }
     }

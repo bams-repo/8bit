@@ -256,7 +256,7 @@ void CKeePassIntegrator::doHTTPPost(const std::string& sRequest, int& nStatus, s
     {
         if (error != boost::asio::error::eof)
         {
-            if (error != 0)
+            if (error)
             { // 0 is success
                 throw boost::system::system_error(error);
             }

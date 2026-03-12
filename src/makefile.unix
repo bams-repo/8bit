@@ -8,8 +8,7 @@ USE_WALLET:=1
 LINK:=$(CXX)
 ARCH:=$(system lscpu | head -n 1 | awk '{print $2}')
 
-DEFS=-DBOOST_SPIRIT_THREADSAFE
-DEFS += -DUSE_SECP256K1
+DEFS=-DBOOST_SPIRIT_THREADSAFE -DBOOST_BIND_GLOBAL_PLACEHOLDERS
 DEFS += $(addprefix -I,$(CURDIR) $(CURDIR)/obj $(BOOST_INCLUDE_PATH) $(BDB_INCLUDE_PATH) $(OPENSSL_INCLUDE_PATH))
 LIBS = $(addprefix -L,$(BOOST_LIB_PATH) $(BDB_LIB_PATH) $(OPENSSL_LIB_PATH))
 
@@ -22,10 +21,6 @@ ifdef STATIC
 	endif
 endif
 
-LIBS += \
- -Wl,-B$(LMODE) \
-   -l secp256k1
-
 # for boost 1.37, add -mt to the boost libraries
 LIBS += \
  -Wl,-B$(LMODE) \
@@ -35,7 +30,8 @@ LIBS += \
    -l boost_thread$(BOOST_LIB_SUFFIX) \
    -l db_cxx$(BDB_LIB_SUFFIX) \
    -l ssl \
-   -l crypto
+   -l crypto \
+   -l boost_chrono$(BOOST_LIB_SUFFIX)
 
 ifndef USE_UPNP
 	override USE_UPNP = -
@@ -43,10 +39,10 @@ endif
 ifneq (${USE_UPNP}, -)
 	LIBS += -l miniupnpc
 	DEFS += -DUSE_UPNP=$(USE_UPNP)
+	DEFS += -I/usr/include/miniupnpc
 endif
 
 LIBS+= \
- -Wl,-B$(LMODE2) \
    -l z \
    -l dl \
    -l pthread
@@ -96,7 +92,7 @@ endif
 
 # CXXFLAGS can be specified on the make command line, so we use xCXXFLAGS that only
 # adds some defaults in front. Unfortunately, CXXFLAGS=... $(CXXFLAGS) does not work.
-xCXXFLAGS=-O2 $(EXT_OPTIONS) -pthread -Wall -Wextra -Wno-ignored-qualifiers -Wformat -Wformat-security -Wno-unused-parameter \
+xCXXFLAGS=-O2 $(EXT_OPTIONS) -pthread -Wall -Wextra -Wno-ignored-qualifiers -Wformat -Wformat-security -Wno-unused-parameter -Wno-deprecated-declarations -Wno-implicit-fallthrough -Wno-deprecated-copy \
     $(DEBUGFLAGS) $(DEFS) $(HARDENING) $(CXXFLAGS)
 
 # LDFLAGS can be specified on the make command line, so we use xLDFLAGS that only
@@ -140,6 +136,7 @@ OBJS= \
     obj/scrypt-x86_64.o \
     obj/chainparams.o \
     obj/irc.o \
+    obj/net_beacon.o \
     obj/stealth.o \
     obj/activemasternode.o \
     obj/darksend.o \

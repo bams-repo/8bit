@@ -8,6 +8,7 @@
 #include "chainparams.h"
 #include "db.h"
 #include "net.h"
+#include "net_beacon.h"
 #include "main.h"
 #include "addrman.h"
 #include "ui_interface.h"
@@ -988,14 +989,8 @@ void ThreadMapPort()
     struct UPNPDev * devlist = 0;
     char lanaddr[64];
 
-#ifndef UPNPDISCOVER_SUCCESS
-    /* miniupnpc 1.5 */
-    devlist = upnpDiscover(2000, multicastif, minissdpdpath, 0);
-#else
-    /* miniupnpc 1.6 */
     int error = 0;
-    devlist = upnpDiscover(2000, multicastif, minissdpdpath, 0, 0, &error);
-#endif
+    devlist = upnpDiscover(2000, multicastif, minissdpdpath, 0, 0, 2, &error);
 
     struct UPNPUrls urls;
     struct IGDdatas data;
@@ -1207,11 +1202,11 @@ void ThreadOpenConnections()
         CSemaphoreGrant grant(*semOutbound);
         boost::this_thread::interruption_point();
 
-        // Add seed nodes if DNS seeds are all down (an infrastructure attack?).
-        if (addrman.size() == 0 && (GetTime() - nStart > 60)) {
+        // Add seed nodes quickly if addrman is empty
+        if (addrman.size() == 0 && (GetTime() - nStart > 15)) {
             static bool done = false;
             if (!done) {
-                LogPrintf("Adding fixed seed nodes as DNS doesn't seem to be available.\n");
+                LogPrintf("Adding fixed seed nodes for bootstrap.\n");
                 addrman.Add(Params().FixedSeeds(), CNetAddr("127.0.0.1"));
                 done = true;
             }
@@ -1675,7 +1670,16 @@ void StartNode(boost::thread_group& threadGroup)
 #endif
 
     // Get addresses from IRC and advertise ours
-    threadGroup.create_thread(boost::bind(&TraceThread<void (*)()>, "irc", &ThreadIRCSeed));
+    if (GetBoolArg("-irc", false))
+        threadGroup.create_thread(boost::bind(&TraceThread<void (*)()>, "irc", &ThreadIRCSeed));
+    else
+        LogPrintf("IRC seeding disabled (use -irc=1 to enable)\n");
+
+    // UDP peer beacon for infrastructureless discovery
+    if (GetBoolArg("-beacon", true))
+        StartBeacon(threadGroup);
+    else
+        LogPrintf("UDP beacon disabled\n");
 
     // Send and receive from sockets, accept connections
     threadGroup.create_thread(boost::bind(&TraceThread<void (*)()>, "net", &ThreadSocketHandler));
@@ -1696,6 +1700,7 @@ void StartNode(boost::thread_group& threadGroup)
 bool StopNode()
 {
     LogPrintf("StopNode()\n");
+    StopBeacon();
     MapPort(false);
     mempool.AddTransactionsUpdated(1);
     if (semOutbound)

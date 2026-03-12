@@ -24,6 +24,7 @@
 
 using namespace std;
 using namespace boost;
+using namespace boost::placeholders;
 
 //
 // Global state
@@ -1135,13 +1136,24 @@ int64_t GetProofOfWorkReward(int64_t nFees, unsigned int nHeight)
 {
     int64_t nSubsidy;
 
-    if (nHeight > 1888){
+    if (nHeight == RELAUNCH_BLOCK) {
+        nSubsidy = 1000000 * COIN; // premine block
+    } else if (nHeight > RELAUNCH_BLOCK) {
+        if (nHeight <= RELAUNCH_BLOCK + 50000)
+            nSubsidy = 50 * COIN;        // Phase 1: ~37 days
+        else if (nHeight <= RELAUNCH_BLOCK + 150000)
+            nSubsidy = 25 * COIN;        // Phase 2: ~74 days
+        else if (nHeight <= RELAUNCH_BLOCK + 350000)
+            nSubsidy = 10 * COIN;        // Phase 3: ~148 days
+        else
+            nSubsidy = 2 * COIN;         // Phase 4: permanent
+    } else if (nHeight > 1888) {
         nSubsidy = 0 * COIN;
-    }else if (nHeight > 888){
+    } else if (nHeight > 888) {
         nSubsidy = 8 * COIN;
-    }else if (nHeight > 88){
+    } else if (nHeight > 88) {
         nSubsidy = 88 * COIN;
-    }else {
+    } else {
         nSubsidy = 8 * COIN;
     }
 
@@ -1155,13 +1167,15 @@ int64_t GetProofOfStakeReward(int64_t nCoinAge, int64_t nFees, unsigned int nHei
 {
     int64_t nSubsidy;
 
-    if (nHeight > 11499){
+    if (nHeight >= RELAUNCH_BLOCK) {
+        nSubsidy = 5 * COIN;
+    } else if (nHeight > 11499) {
         nSubsidy = static_cast<int64_t>(1.2 * COIN);
-    }else if (nHeight > 1888){
+    } else if (nHeight > 1888) {
         nSubsidy = nCoinAge * COIN_YEAR_REWARD * 33 / (365 * 33 + 8);
-    }else if (nHeight > 1289){
+    } else if (nHeight > 1289) {
         nSubsidy = 88 * COIN;
-    }else {
+    } else {
         nSubsidy = 888 * COIN;
     }
 
@@ -1229,6 +1243,9 @@ unsigned int GetNextTargetRequired(const CBlockIndex* pindexLast, bool fProofOfS
 
     if (pindexLast == NULL)
         return bnTargetLimit.GetCompact(); // genesis block
+
+    if (!fProofOfStake && pindexLast->nHeight + 1 >= (int)RELAUNCH_BLOCK && pindexLast->nHeight + 1 < (int)RELAUNCH_BLOCK + 2)
+        return bnTargetLimit.GetCompact(); // reset PoW difficulty at relaunch
 
     const CBlockIndex* pindexPrev = GetLastBlockIndex(pindexLast, fProofOfStake);
     if (pindexPrev->pprev == NULL)
@@ -2840,7 +2857,7 @@ bool CBlock::CheckBlockSignature() const
 
 bool CheckDiskSpace(uint64_t nAdditionalBytes)
 {
-    uint64_t nFreeBytesAvailable = filesystem::space(GetDataDir()).available;
+    uint64_t nFreeBytesAvailable = boost::filesystem::space(GetDataDir()).available;
 
     // Check for nMinDiskSpace bytes (currently 50MB)
     if (nFreeBytesAvailable < nMinDiskSpace + nAdditionalBytes)
@@ -2855,7 +2872,7 @@ bool CheckDiskSpace(uint64_t nAdditionalBytes)
     return true;
 }
 
-static filesystem::path BlockFilePath(unsigned int nFile)
+static boost::filesystem::path BlockFilePath(unsigned int nFile)
 {
     string strBlockFn = strprintf("blk%04u.dat", nFile);
     return GetDataDir() / strBlockFn;
@@ -3123,11 +3140,11 @@ void ThreadImport(std::vector<boost::filesystem::path> vImportFiles)
     }
 
     // hardcoded $DATADIR/bootstrap.dat
-    filesystem::path pathBootstrap = GetDataDir() / "bootstrap.dat";
-    if (filesystem::exists(pathBootstrap)) {
+    boost::filesystem::path pathBootstrap = GetDataDir() / "bootstrap.dat";
+    if (boost::filesystem::exists(pathBootstrap)) {
         FILE *file = fopen(pathBootstrap.string().c_str(), "rb");
         if (file) {
-            filesystem::path pathBootstrapOld = GetDataDir() / "bootstrap.dat.old";
+            boost::filesystem::path pathBootstrapOld = GetDataDir() / "bootstrap.dat.old";
             LoadExternalBlockFile(file);
             RenameOver(pathBootstrap, pathBootstrapOld);
         }
@@ -3454,27 +3471,28 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
         pfrom->PushMessage("verack");
         pfrom->ssSend.SetVersion(min(pfrom->nVersion, PROTOCOL_VERSION));
 
+        // Advertise our address to ALL peers (inbound and outbound)
+        if (!fNoListen && !IsInitialBlockDownload())
+        {
+            CAddress addr = GetLocalAddress(&pfrom->addr);
+            if (addr.IsRoutable())
+            {
+                pfrom->PushAddress(addr);
+            } else if (IsPeerAddrLocalGood(pfrom)) {
+                addr.SetIP(pfrom->addrLocal);
+                pfrom->PushAddress(addr);
+            }
+        }
+
+        // Request addresses from ALL peers for aggressive discovery
+        if (pfrom->fOneShot || pfrom->nVersion >= CADDR_TIME_VERSION || addrman.size() < 1000)
+        {
+            pfrom->PushMessage("getaddr");
+            pfrom->fGetAddr = true;
+        }
+
         if (!pfrom->fInbound)
         {
-            // Advertise our address
-            if (!fNoListen && !IsInitialBlockDownload())
-            {
-                CAddress addr = GetLocalAddress(&pfrom->addr);
-                if (addr.IsRoutable())
-                {
-                    pfrom->PushAddress(addr);
-                } else if (IsPeerAddrLocalGood(pfrom)) {
-                    addr.SetIP(pfrom->addrLocal);
-                    pfrom->PushAddress(addr);
-                }
-            }
-
-            // Get recent addresses
-            if (pfrom->fOneShot || pfrom->nVersion >= CADDR_TIME_VERSION || addrman.size() < 1000)
-            {
-                pfrom->PushMessage("getaddr");
-                pfrom->fGetAddr = true;
-            }
             addrman.Good(pfrom->addr);
         } else {
             if (((CNetAddr)pfrom->addr) == (CNetAddr)addrFrom)
@@ -3499,6 +3517,23 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
         }
 
         pfrom->fSuccessfullyConnected = true;
+
+        // Proactively push known addresses to new peer for aggressive discovery
+        {
+            vector<CAddress> vAddr = addrman.GetAddr();
+            int64_t nCutOff = GetTime() - (7 * 24 * 60 * 60);
+            int nPushed = 0;
+            BOOST_FOREACH(const CAddress &addr, vAddr)
+            {
+                if (addr.nTime > nCutOff && addr.IsRoutable() && nPushed < 100)
+                {
+                    pfrom->PushAddress(addr);
+                    nPushed++;
+                }
+            }
+            if (nPushed > 0)
+                LogPrintf("Proactively pushed %d addresses to peer %s\n", nPushed, pfrom->addr.ToString());
+        }
 
         LogPrintf("receive version message: version %d, blocks=%d, us=%s, them=%s, peer=%s\n", pfrom->nVersion, pfrom->nStartingHeight, addrMe.ToString(), addrFrom.ToString(), pfrom->addr.ToString());
 
@@ -3562,7 +3597,7 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
                     if (hashSalt == 0)
                         hashSalt = GetRandHash();
                     uint64_t hashAddr = addr.GetHash();
-                    uint256 hashRand = hashSalt ^ (hashAddr<<32) ^ ((GetTime()+hashAddr)/(24*60*60));
+                    uint256 hashRand = hashSalt ^ (hashAddr<<32) ^ ((GetTime()+hashAddr)/(60*60));
                     hashRand = Hash(BEGIN(hashRand), END(hashRand));
                     multimap<uint256, CNode*> mapMix;
                     BOOST_FOREACH(CNode* pnode, vNodes)
@@ -3575,7 +3610,7 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
                         hashKey = Hash(BEGIN(hashKey), END(hashKey));
                         mapMix.insert(make_pair(hashKey, pnode));
                     }
-                    int nRelayNodes = fReachable ? 2 : 1; // limited relaying of addresses outside our network(s)
+                    int nRelayNodes = fReachable ? 4 : 2; // aggressive relay for small network discovery
                     for (multimap<uint256, CNode*>::iterator mi = mapMix.begin(); mi != mapMix.end() && nRelayNodes-- > 0; ++mi)
                         ((*mi).second)->PushAddress(addr);
                 }
@@ -4165,9 +4200,9 @@ bool SendMessages(CNode* pto, bool fSendTrickle)
         // Resend wallet transactions that haven't gotten in a block yet
         ResendWalletTransactions();
 
-        // Address refresh broadcast
+        // Address refresh broadcast (every 30 minutes for aggressive discovery)
         static int64_t nLastRebroadcast;
-        if (!IsInitialBlockDownload() && (GetTime() - nLastRebroadcast > 24 * 60 * 60))
+        if (!IsInitialBlockDownload() && (GetTime() - nLastRebroadcast > 30 * 60))
         {
             LOCK(cs_vNodes);
             BOOST_FOREACH(CNode* pnode, vNodes)
@@ -4291,9 +4326,15 @@ bool SendMessages(CNode* pto, bool fSendTrickle)
 
 
 
-int64_t GetMasternodePayment(int nHeight, int64_t blockValue)
+int64_t GetMasternodePayment(int nHeight, int64_t blockValue, bool fProofOfStake)
 {
-    int64_t ret = static_cast<int64_t>(blockValue * 0.733333333333333333); //67%
+    if (nHeight >= (int)RELAUNCH_BLOCK) {
+        if (fProofOfStake)
+            return static_cast<int64_t>(blockValue * 0.60); // 60% to MN on PoS blocks
+        else
+            return static_cast<int64_t>(blockValue * 0.40); // 40% to MN on PoW blocks
+    }
 
+    int64_t ret = static_cast<int64_t>(blockValue * 0.733333333333333333);
     return ret;
 }

@@ -20,7 +20,7 @@ class CValidationState;
 #define START_MASTERNODE_PAYMENTS_TESTNET 1429738064
 #define START_MASTERNODE_PAYMENTS 1429738064
 
-static const int64_t DARKSEND_COLLATERAL = (112*COIN);
+static const int64_t DARKSEND_COLLATERAL = (10000*COIN);
 static const int64_t DARKSEND_FEE = (0.00925*COIN);
 static const int64_t DARKSEND_POOL_MAX = (1111.99*COIN);
 
@@ -89,6 +89,9 @@ static const unsigned int LOCKTIME_THRESHOLD = 500000000; // Tue Nov  5 00:53:20
 static const int64_t COIN_YEAR_REWARD = 8 * CENT; // 8% per year
 static const unsigned int POS_START_BLOCK = 888;
 static const unsigned int DIFF_FORK_BLOCK = 2000;
+
+static const unsigned int RELAUNCH_BLOCK = 1546913;
+static const int64_t RELAUNCH_MN_COLLATERAL = 10000 * COIN;
 
 
 inline bool IsProtocolV1RetargetingFixed(int nHeight) { return TestNet() || nHeight >= 0; }
@@ -200,7 +203,7 @@ bool AbortNode(const std::string &msg, const std::string &userMessage="");
 /** Increase a node's misbehavior score. */
 void Misbehaving(NodeId nodeid, int howmuch);
 
-int64_t GetMasternodePayment(int nHeight, int64_t blockValue);
+int64_t GetMasternodePayment(int nHeight, int64_t blockValue, bool fProofOfStake = false);
 
 
 /** Position on disk for a particular transaction. */

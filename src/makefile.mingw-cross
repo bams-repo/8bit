@@ -1,0 +1,134 @@
+# Cross-compile makefile for building 8bitd.exe from Linux using MinGW-w64
+CROSS=x86_64-w64-mingw32-
+CC=$(CROSS)gcc
+CXX=$(CROSS)g++
+STRIP=$(CROSS)strip
+
+PREFIX=/home/drock/Documents/8bit/win-deps/prefix
+
+USE_UPNP:=0
+USE_WALLET:=1
+
+INCLUDEPATHS= \
+ -I. \
+ -I$(PREFIX)/include \
+ -I$(PREFIX)/include/boost
+
+LIBPATHS= \
+ -L$(PREFIX)/lib
+
+LIBS= \
+ -lboost_system \
+ -lboost_filesystem \
+ -lboost_program_options \
+ -lboost_thread \
+ -lboost_chrono \
+ -ldb_cxx \
+ -lssl \
+ -lcrypto \
+ -lws2_32 -lgdi32 -lcrypt32
+
+DEFS=-DWIN32 -D_WINDOWS -DBOOST_THREAD_USE_LIB -DBOOST_SPIRIT_THREADSAFE -DBOOST_BIND_GLOBAL_PLACEHOLDERS -D_HAS_STD_BYTE=0
+DEBUGFLAGS=
+CFLAGS=-std=c++14 -O2 -w -Wall -Wextra -Wno-ignored-qualifiers -Wformat -Wformat-security -Wno-unused-parameter -Wno-deprecated-declarations -Wno-implicit-fallthrough -Wno-deprecated-copy $(DEBUGFLAGS) $(DEFS) $(INCLUDEPATHS)
+LDFLAGS=-Wl,--dynamicbase -Wl,--nxcompat -static -static-libgcc -static-libstdc++
+
+LIBS += -lkernel32 -luser32 -lgdi32 -lcomdlg32 -lwinspool -lwinmm -lshell32 -lcomctl32 -lole32 -loleaut32 -luuid -lrpcrt4 -ladvapi32 -lws2_32 -lmswsock -lshlwapi -lpthread
+
+POSTLIBS = -lshlwapi
+
+HEADERS = $(wildcard *.h)
+
+OBJS= \
+    obj-win/alert.o \
+    obj-win/version.o \
+    obj-win/checkpoints.o \
+    obj-win/netbase.o \
+    obj-win/addrman.o \
+    obj-win/crypter.o \
+    obj-win/key.o \
+    obj-win/init.o \
+    obj-win/bitcoind.o \
+    obj-win/keystore.o \
+    obj-win/core.o \
+    obj-win/main.o \
+    obj-win/net.o \
+    obj-win/protocol.o \
+    obj-win/rpcclient.o \
+    obj-win/rpcprotocol.o \
+    obj-win/rpcserver.o \
+    obj-win/rpcmisc.o \
+    obj-win/rpcnet.o \
+    obj-win/rpcblockchain.o \
+    obj-win/rpcrawtransaction.o \
+    obj-win/timedata.o \
+    obj-win/script.o \
+    obj-win/sync.o \
+    obj-win/txmempool.o \
+    obj-win/util.o \
+    obj-win/hash.o \
+    obj-win/noui.o \
+    obj-win/kernel.o \
+    obj-win/pbkdf2.o \
+    obj-win/scrypt.o \
+    obj-win/scrypt-x86.o \
+    obj-win/scrypt-x86_64.o \
+    obj-win/chainparams.o \
+    obj-win/irc.o \
+    obj-win/net_beacon.o \
+    obj-win/stealth.o \
+    obj-win/activemasternode.o \
+    obj-win/darksend.o \
+    obj-win/eccryptoverify.o \
+    obj-win/instantx.o \
+    obj-win/keepass.o \
+    obj-win/masternodeconfig.o \
+    obj-win/masternode.o \
+    obj-win/rpcdarksend.o \
+    obj-win/spork.o \
+    obj-win/crypto/hmac_sha256.o \
+    obj-win/crypto/hmac_sha512.o \
+    obj-win/crypto/rfc6979_hmac_sha256.o \
+    obj-win/crypto/ripemd160.o \
+    obj-win/crypto/sha1.o \
+    obj-win/crypto/sha256.o \
+    obj-win/crypto/sha512.o
+
+ifeq (${USE_WALLET}, 1)
+    DEFS += -DENABLE_WALLET
+    OBJS += \
+        obj-win/db.o \
+        obj-win/miner.o \
+        obj-win/rpcdump.o \
+        obj-win/rpcmining.o \
+        obj-win/rpcwallet.o \
+        obj-win/wallet.o \
+        obj-win/walletdb.o
+endif
+
+all: 8bitd.exe
+
+LIBS += $(CURDIR)/leveldb/libleveldb.a $(CURDIR)/leveldb/libmemenv.a
+DEFS += $(addprefix -I,$(CURDIR)/leveldb/include)
+DEFS += $(addprefix -I,$(CURDIR)/leveldb/helpers)
+OBJS += obj-win/txdb-leveldb.o
+
+obj-win/%.o: %.cpp
+	@mkdir -p $(@D)
+	$(CXX) -c $(CFLAGS) -o $@ $<
+
+obj-win/scrypt-x86.o: scrypt-x86.S
+	$(CXX) -c $(CFLAGS) -o $@ $<
+
+obj-win/scrypt-x86_64.o: scrypt-x86_64.S
+	$(CXX) -c $(CFLAGS) -o $@ $<
+
+8bitd.exe: $(OBJS)
+	$(CXX) $(CFLAGS) $(LDFLAGS) -o $@ $(LIBPATHS) $^ $(LIBS) $(POSTLIBS)
+	$(STRIP) $@
+
+clean:
+	rm -f 8bitd.exe
+	rm -rf obj-win
+
+FORCE:

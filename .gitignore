@@ -1,0 +1,36 @@
+# Build artifacts
+build/
+build-win/
+release/
+debug/
+*.o
+*.obj
+obj/
+obj-win/
+Makefile
+Makefile.Debug
+Makefile.Release
+.qmake.stash
+8bit-qt_plugin_import.cpp
+
+# Binaries
+8bit-qt
+8bit-qt.exe
+src/8bitd
+src/8bitd.exe
+src/obj/
+src/obj-win/
+
+# LevelDB build
+src/leveldb/*.a
+src/leveldb/*.lib
+
+# IDE
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
