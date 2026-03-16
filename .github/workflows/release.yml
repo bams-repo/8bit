@@ -1,0 +1,203 @@
+name: Build Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. v2.1.1)'
+        required: true
+        default: 'v2.1.1'
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libboost-all-dev libssl-dev \
+            libdb++-dev libminiupnpc-dev qt5-qmake qtbase5-dev \
+            qttools5-dev-tools libqt5gui5 libqt5core5a libqt5dbus5 \
+            libqrencode-dev
+
+      - name: Build LevelDB
+        run: |
+          cd src/leveldb
+          make libleveldb.a libmemenv.a
+
+      - name: Build 8bitd (daemon)
+        run: |
+          cd src
+          make -f makefile.unix -j$(nproc)
+          strip 8bitd
+
+      - name: Build 8bit-qt (GUI wallet)
+        run: |
+          qmake 8bit.pro "USE_UPNP=-" "USE_QRCODE=1"
+          make -j$(nproc)
+          strip 8bit-qt
+
+      - name: Package Linux release
+        run: |
+          mkdir -p 8bit-linux-x86_64
+          cp 8bit-qt 8bit-linux-x86_64/
+          cp src/8bitd 8bit-linux-x86_64/
+          cp COPYING 8bit-linux-x86_64/
+          tar czf 8bit-linux-x86_64.tar.gz 8bit-linux-x86_64/
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: 8bit-linux-x86_64
+          path: 8bit-linux-x86_64.tar.gz
+
+  build-windows:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cross-compilation toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential g++-mingw-w64-x86-64 \
+            mingw-w64-x86-64-dev autoconf libtool pkg-config
+
+      - name: Cache Windows dependencies
+        uses: actions/cache@v4
+        id: win-deps-cache
+        with:
+          path: /tmp/win-prefix
+          key: win-deps-v1-${{ runner.os }}
+
+      - name: Build Windows dependencies
+        if: steps.win-deps-cache.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          CROSS=x86_64-w64-mingw32
+          PREFIX=/tmp/win-prefix
+          mkdir -p $PREFIX/lib $PREFIX/include
+
+          # OpenSSL
+          cd /tmp
+          wget -q https://www.openssl.org/source/openssl-3.0.15.tar.gz
+          tar xzf openssl-3.0.15.tar.gz
+          cd openssl-3.0.15
+          ./Configure mingw64 --cross-compile-prefix=$CROSS- --prefix=$PREFIX no-shared
+          make -j$(nproc)
+          make install_sw
+
+          # Berkeley DB 5.3
+          cd /tmp
+          wget -q https://download.oracle.com/berkeley-db/db-5.3.28.tar.gz
+          tar xzf db-5.3.28.tar.gz
+          cd db-5.3.28/build_unix
+          ../dist/configure --host=$CROSS --prefix=$PREFIX --enable-mingw \
+            --enable-cxx --disable-shared --disable-replication
+          make -j$(nproc)
+          make install
+
+          # Boost
+          cd /tmp
+          wget -q https://boostorg.jfrog.io/artifactory/main/release/1.83.0/source/boost_1_83_0.tar.gz
+          tar xzf boost_1_83_0.tar.gz
+          cd boost_1_83_0
+          echo "using gcc : mingw : $CROSS-g++ ;" > user-config.jam
+          ./bootstrap.sh
+          ./b2 --user-config=user-config.jam toolset=gcc-mingw target-os=windows \
+            address-model=64 variant=release link=static runtime-link=static \
+            threading=multi threadapi=win32 \
+            --with-system --with-filesystem --with-program_options --with-thread --with-chrono \
+            --prefix=$PREFIX install -j$(nproc) || true
+
+      - name: Build LevelDB for Windows
+        run: |
+          cd src/leveldb
+          CC=x86_64-w64-mingw32-gcc CXX=x86_64-w64-mingw32-g++ \
+            TARGET_OS=NATIVE_WINDOWS make libleveldb.a libmemenv.a \
+            OPT="-DOS_WINDOWS -I/tmp/win-prefix/include"
+
+      - name: Build 8bitd.exe (daemon)
+        run: |
+          cd src
+          sed -i "s|PREFIX=.*|PREFIX=/tmp/win-prefix|" makefile.mingw-cross
+          make -f makefile.mingw-cross -j$(nproc)
+          x86_64-w64-mingw32-strip 8bitd.exe
+
+      - name: Build 8bit-qt.exe (GUI wallet)
+        run: |
+          export PATH="/tmp/win-prefix/bin:$PATH"
+          # Qt5 cross-compile would require pre-built Qt - use cached binaries if available
+          # For now, only daemon is cross-compiled; Qt wallet requires pre-built Qt5
+          echo "Windows Qt wallet requires pre-built Qt5 cross-compile environment"
+          echo "Including daemon only in this automated build"
+
+      - name: Package Windows release
+        run: |
+          mkdir -p 8bit-win64
+          cp src/8bitd.exe 8bit-win64/ 2>/dev/null || true
+          cp COPYING 8bit-win64/
+          # If Qt wallet was built, include it
+          cp release/8bit-qt.exe 8bit-win64/ 2>/dev/null || true
+          cp 8bit-qt.exe 8bit-win64/ 2>/dev/null || true
+          zip -r 8bit-win64.zip 8bit-win64/
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: 8bit-win64
+          path: 8bit-win64.zip
+
+  release:
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-22.04
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: 8bit-linux-x86_64
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: 8bit-win64
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "8BIT ${{ steps.version.outputs.tag }}"
+          body: |
+            ## 8BIT ${{ steps.version.outputs.tag }}
+
+            ### Downloads
+            - **Linux (x86_64)**: `8bit-linux-x86_64.tar.gz` — GUI wallet (`8bit-qt`) and daemon (`8bitd`)
+            - **Windows (x64)**: `8bit-win64.zip` — Daemon (`8bitd.exe`)
+
+            ### Network Info
+            - Algorithm: Scrypt (PoW) + Proof of Stake
+            - Block Time: ~64 seconds
+            - Default Port: 18888 / RPC Port: 18889
+          files: |
+            8bit-linux-x86_64.tar.gz
+            8bit-win64.zip
+          draft: false
+          prerelease: false
