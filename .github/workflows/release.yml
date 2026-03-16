@@ -109,7 +109,7 @@ jobs:
 
           # Boost
           cd /tmp
-          wget -q https://boostorg.jfrog.io/artifactory/main/release/1.83.0/source/boost_1_83_0.tar.gz
+          wget -q https://archives.boost.io/release/1.83.0/source/boost_1_83_0.tar.gz
           tar xzf boost_1_83_0.tar.gz
           cd boost_1_83_0
           echo "using gcc : mingw : $CROSS-g++ ;" > user-config.jam
