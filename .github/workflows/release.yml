@@ -33,6 +33,7 @@ jobs:
       - name: Build 8bitd (daemon)
         run: |
           cd src
+          mkdir -p obj/crypto
           make -f makefile.unix -j$(nproc)
           strip 8bitd
 
@@ -82,22 +83,29 @@ jobs:
           PREFIX=/tmp/win-prefix
           mkdir -p $PREFIX/lib $PREFIX/include
 
-          # OpenSSL
+          # OpenSSL 1.1.1 (compatible with legacy Bitcoin codebase)
           cd /tmp
-          wget -q https://www.openssl.org/source/openssl-3.0.15.tar.gz
-          tar xzf openssl-3.0.15.tar.gz
-          cd openssl-3.0.15
-          ./Configure mingw64 --cross-compile-prefix=$CROSS- --prefix=$PREFIX no-shared
+          wget -q https://www.openssl.org/source/openssl-1.1.1w.tar.gz
+          tar xzf openssl-1.1.1w.tar.gz
+          cd openssl-1.1.1w
+          ./Configure mingw64 --cross-compile-prefix=$CROSS- --prefix=$PREFIX no-shared no-tests
           make -j$(nproc)
           make install_sw
 
-          # Berkeley DB 5.3
+          # Berkeley DB 4.8 (standard for Bitcoin-derived coins)
           cd /tmp
-          wget -q https://download.oracle.com/berkeley-db/db-5.3.28.tar.gz
-          tar xzf db-5.3.28.tar.gz
-          cd db-5.3.28/build_unix
-          ../dist/configure --host=$CROSS --prefix=$PREFIX --enable-mingw \
-            --enable-cxx --disable-shared --disable-replication
+          wget -q https://download.oracle.com/berkeley-db/db-4.8.30.NC.tar.gz
+          tar xzf db-4.8.30.NC.tar.gz
+          cd db-4.8.30.NC
+
+          # Patch for MinGW cross-compilation
+          sed -i 's/__atomic_compare_exchange/__atomic_compare_exchange_db/g' dbinc/atomic.h
+
+          cd build_unix
+          ../dist/configure --host=$CROSS --prefix=$PREFIX \
+            --enable-cxx --disable-shared --disable-replication \
+            CFLAGS="-DWINVER=0x0501 -D_WIN32_WINNT=0x0501" \
+            CXXFLAGS="-DWINVER=0x0501 -D_WIN32_WINNT=0x0501"
           make -j$(nproc)
           make install
 
