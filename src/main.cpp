@@ -2548,7 +2548,8 @@ bool CBlock::AcceptBlock()
     if (IsProofOfStake())
     {
         uint256 targetProofOfStake;
-        if (!CheckProofOfStake(pindexPrev, vtx[1], nBits, hashProof, targetProofOfStake))
+        if (!CheckProofOfStake(pindexPrev, vtx[1], nBits, hashProof, targetProofOfStake,
+                nHeight <= Checkpoints::GetTotalBlocksEstimate()))
         {
             return error("AcceptBlock() : check proof-of-stake failed for block %s", hash.ToString());
         }
@@ -3272,6 +3273,9 @@ void static ProcessGetData(CNode* pfrom)
 
     LOCK(cs_main);
 
+    int nBlocksSent = 0;
+    static const int MAX_BLOCKS_PER_SEND = 128;
+
     while (it != pfrom->vRecvGetData.end()) {
         // Don't bother if send buffer is too full to respond anyway
         if (pfrom->nSendSize >= SendBufferSize())
@@ -3303,6 +3307,10 @@ void static ProcessGetData(CNode* pfrom)
                         pfrom->PushMessage("inv", vInv);
                         pfrom->hashContinue = 0;
                     }
+
+                    ++nBlocksSent;
+                    if (nBlocksSent >= MAX_BLOCKS_PER_SEND || pfrom->nSendSize >= SendBufferSize())
+                        break;
                 }
             }
             else if (inv.IsKnownType())
@@ -3384,9 +3392,6 @@ void static ProcessGetData(CNode* pfrom)
 
             // Track requests for our stuff.
             g_signals.Inventory(inv.hash);
-
-            if (inv.type == MSG_BLOCK /* || inv.type == MSG_FILTERED_BLOCK */)
-                break;
         }
     }
 

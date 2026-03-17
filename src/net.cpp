@@ -6,6 +6,7 @@
 #include "init.h"
 #include "irc.h"
 #include "chainparams.h"
+#include "checkpoints.h"
 #include "db.h"
 #include "net.h"
 #include "net_beacon.h"
@@ -1476,8 +1477,12 @@ void ThreadMessageHandler()
                 pnode->Release();
         }
 
-        if (fSleep)
-            MilliSleep(100);
+        if (fSleep) {
+            // Reduce sleep during initial sync to process blocks faster.
+            // Use nBestHeight check to avoid cs_main lock contention.
+            bool fSyncing = (nBestHeight < Checkpoints::GetTotalBlocksEstimate());
+            MilliSleep(fSyncing ? 1 : 100);
+        }
     }
 }
 
