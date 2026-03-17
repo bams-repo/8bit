@@ -2770,8 +2770,8 @@ alertnotify=echo %%s | mail -s &quot;8Bit Alert&quot; admin@foo.com
     </message>
     <message>
         <location line="+6"/>
-        <source>Listen for connections on &lt;port&gt; (default: 15714 or testnet: 25714)</source>
-        <translation>监听&lt;port&gt;端口的连接 (默认: 15714 测试网: 25714)</translation>
+        <source>Listen for connections on &lt;port&gt; (default: 18888 or testnet: 28888)</source>
+        <translation>监听&lt;port&gt;端口的连接 (默认: 18888 测试网: 28888)</translation>
     </message>
     <message>
         <location line="+1"/>
@@ -2820,8 +2820,8 @@ alertnotify=echo %%s | mail -s &quot;8Bit Alert&quot; admin@foo.com
     </message>
     <message>
         <location line="+65"/>
-        <source>Listen for JSON-RPC connections on &lt;port&gt; (default: 15715 or testnet: 25715)</source>
-        <translation>监听 &lt;port&gt; 端口的JSON-RPC连接 (默认: 15715 测试网: 25715)</translation>
+        <source>Listen for JSON-RPC connections on &lt;port&gt; (default: 18889 or testnet: 28889)</source>
+        <translation>监听 &lt;port&gt; 端口的JSON-RPC连接 (默认: 18889 测试网: 28889)</translation>
     </message>
     <message>
         <location line="-17"/>

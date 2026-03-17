@@ -2742,7 +2742,7 @@ for example: alertnotify=echo %%s | mail -s &quot;8Bit Alert&quot; admin@foo.com
     </message>
     <message>
         <location line="+6"/>
-        <source>Listen for connections on &lt;port&gt; (default: 15714 or testnet: 25714)</source>
+        <source>Listen for connections on &lt;port&gt; (default: 18888 or testnet: 28888)</source>
         <translation type="unfinished"/>
     </message>
     <message>
@@ -2792,7 +2792,7 @@ for example: alertnotify=echo %%s | mail -s &quot;8Bit Alert&quot; admin@foo.com
     </message>
     <message>
         <location line="+65"/>
-        <source>Listen for JSON-RPC connections on &lt;port&gt; (default: 15715 or testnet: 25715)</source>
+        <source>Listen for JSON-RPC connections on &lt;port&gt; (default: 18889 or testnet: 28889)</source>
         <translation type="unfinished"/>
     </message>
     <message>

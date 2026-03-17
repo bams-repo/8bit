@@ -2741,8 +2741,8 @@ for example: alertnotify=echo %%s | mail -s &quot;8Bit Alert&quot; admin@foo.com
     </message>
     <message>
         <location line="+6"/>
-        <source>Listen for connections on &lt;port&gt; (default: 15714 or testnet: 25714)</source>
-        <translation>Horche für verbindungen auf &lt;Port&gt; (Standard: 15714 oder Testnetz: 25714)</translation>
+        <source>Listen for connections on &lt;port&gt; (default: 18888 or testnet: 28888)</source>
+        <translation>Horche für verbindungen auf &lt;Port&gt; (Standard: 18888 oder Testnetz: 28888)</translation>
     </message>
     <message>
         <location line="+1"/>
@@ -2791,8 +2791,8 @@ for example: alertnotify=echo %%s | mail -s &quot;8Bit Alert&quot; admin@foo.com
     </message>
     <message>
         <location line="+65"/>
-        <source>Listen for JSON-RPC connections on &lt;port&gt; (default: 15715 or testnet: 25715)</source>
-        <translation>Horche für eingehende JSON-RPC Verbindungen auf &lt;Port&gt;(Standard: 15715 or Testnetz: 25715)</translation>
+        <source>Listen for JSON-RPC connections on &lt;port&gt; (default: 18889 or testnet: 28889)</source>
+        <translation>Horche für eingehende JSON-RPC Verbindungen auf &lt;Port&gt;(Standard: 18889 or Testnetz: 28889)</translation>
     </message>
     <message>
         <location line="-17"/>
