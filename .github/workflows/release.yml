@@ -355,14 +355,8 @@ jobs:
             echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
           fi
 
-      - name: Collect release files
-        id: files
-        run: |
-          FILES=""
-          [ -f "8bit-linux-x86_64.tar.gz" ] && FILES="$FILES 8bit-linux-x86_64.tar.gz"
-          [ -f "8bit-win64.zip" ] && FILES="$FILES 8bit-win64.zip"
-          [ -f "8bit-macos-x86_64.tar.gz" ] && FILES="$FILES 8bit-macos-x86_64.tar.gz"
-          echo "files=$FILES" >> $GITHUB_OUTPUT
+      - name: List available release files
+        run: ls -la *.tar.gz *.zip 2>/dev/null || echo "No release files found"
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -381,6 +375,10 @@ jobs:
             - Algorithm: Scrypt (PoW) + Proof of Stake
             - Block Time: ~64 seconds
             - Default Port: 18888 / RPC Port: 18889
-          files: ${{ steps.files.outputs.files }}
+          files: |
+            8bit-linux-x86_64.tar.gz
+            8bit-win64.zip
+            8bit-macos-x86_64.tar.gz
+          fail_on_unmatched_files: false
           draft: false
           prerelease: false
