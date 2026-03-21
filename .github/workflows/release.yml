@@ -73,7 +73,7 @@ jobs:
         id: win-deps-cache
         with:
           path: /tmp/win-prefix
-          key: win-deps-v2-${{ runner.os }}
+          key: win-deps-v3-${{ runner.os }}
 
       - name: Build Windows dependencies
         if: steps.win-deps-cache.outputs.cache-hit != 'true'
@@ -116,27 +116,6 @@ jobs:
             threading=multi threadapi=win32 \
             --with-system --with-filesystem --with-program_options --with-thread --with-chrono \
             --prefix=$PREFIX install -j$(nproc) || true
-
-          # miniupnpc
-          cd /tmp
-          wget -q https://miniupnp.tuxfamily.org/files/miniupnpc-2.2.7.tar.gz
-          tar xzf miniupnpc-2.2.7.tar.gz
-          cd miniupnpc-2.2.7
-          CC=$CROSS-gcc AR=$CROSS-ar \
-            CFLAGS="-DWIN32 -D_WIN32_WINNT=0x0501 -DMINIUPNP_STATICLIB" \
-            make -f Makefile libminiupnpc.a
-          mkdir -p $PREFIX/include/miniupnpc
-          cp *.h $PREFIX/include/miniupnpc/
-          cp libminiupnpc.a $PREFIX/lib/
-
-          # qrencode
-          cd /tmp
-          wget -q https://fukuchi.org/works/qrencode/qrencode-4.1.1.tar.gz
-          tar xzf qrencode-4.1.1.tar.gz
-          cd qrencode-4.1.1
-          ./configure --host=$CROSS --prefix=$PREFIX --enable-static --disable-shared --without-tools
-          make -j$(nproc)
-          make install
 
           # Qt 5.15 (static, cross-compiled)
           cd /tmp
@@ -187,16 +166,13 @@ jobs:
 
           $PREFIX/qt5/bin/qmake 8bit.pro \
             "USE_UPNP=-" \
-            "USE_QRCODE=1" \
+            "USE_QRCODE=0" \
             "BDB_INCLUDE_PATH=$PREFIX/include" \
             "BDB_LIB_PATH=$PREFIX/lib" \
             "BOOST_INCLUDE_PATH=$PREFIX/include" \
             "BOOST_LIB_PATH=$PREFIX/lib" \
             "OPENSSL_INCLUDE_PATH=$PREFIX/include" \
-            "OPENSSL_LIB_PATH=$PREFIX/lib" \
-            "QRENCODE_INCLUDE_PATH=$PREFIX/include" \
-            "QRENCODE_LIB_PATH=$PREFIX/lib" \
-            "BOOST_LIB_SUFFIX=-mt"
+            "OPENSSL_LIB_PATH=$PREFIX/lib"
 
           make -j$(nproc)
           x86_64-w64-mingw32-strip release/8bit-qt.exe 2>/dev/null || \
