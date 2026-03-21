@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version (e.g. v2.1.1)'
+        description: 'Release version (e.g. v2.1.3)'
         required: true
-        default: 'v2.1.1'
+        default: 'v2.1.3'
 
 jobs:
   build-linux:
@@ -58,99 +58,135 @@ jobs:
           path: 8bit-linux-x86_64.tar.gz
 
   build-windows:
-    runs-on: ubuntu-22.04
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install cross-compilation toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential g++-mingw-w64-x86-64 \
-            mingw-w64-x86-64-dev autoconf libtool pkg-config
-
-      - name: Cache Windows dependencies
-        uses: actions/cache@v4
-        id: win-deps-cache
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
         with:
-          path: /tmp/win-prefix
-          key: win-deps-v1-${{ runner.os }}
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-boost
+            mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-miniupnpc
+            mingw-w64-x86_64-qrencode
+            mingw-w64-x86_64-qt5-base
+            mingw-w64-x86_64-qt5-tools
+            make
+            autoconf
+            automake
+            libtool
+            pkg-config
 
-      - name: Build Windows dependencies
-        if: steps.win-deps-cache.outputs.cache-hit != 'true'
+      - name: Cache Berkeley DB 5.3
+        uses: actions/cache@v4
+        id: bdb-cache
+        with:
+          path: C:/bdb-prefix
+          key: win-bdb53-mingw64-v2
+
+      - name: Build Berkeley DB 5.3
+        if: steps.bdb-cache.outputs.cache-hit != 'true'
         run: |
-          set -e
-          CROSS=x86_64-w64-mingw32
-          PREFIX=/tmp/win-prefix
-          mkdir -p $PREFIX/lib $PREFIX/include
-
-          # OpenSSL 1.1.1 (compatible with legacy Bitcoin codebase)
           cd /tmp
-          wget -q https://www.openssl.org/source/openssl-1.1.1w.tar.gz
-          tar xzf openssl-1.1.1w.tar.gz
-          cd openssl-1.1.1w
-          ./Configure mingw64 --cross-compile-prefix=$CROSS- --prefix=$PREFIX no-shared no-tests
-          make -j$(nproc)
-          make install_sw
-
-          # Berkeley DB 5.3
-          cd /tmp
-          wget -q https://download.oracle.com/berkeley-db/db-5.3.28.tar.gz
+          curl -fsSL -o db-5.3.28.tar.gz https://download.oracle.com/berkeley-db/db-5.3.28.tar.gz
           tar xzf db-5.3.28.tar.gz
-          cd db-5.3.28
-
-          # Fix case-sensitive header includes for MinGW on Linux
-          sed -i 's/#include <WinIoCtl.h>/#include <winioctl.h>/g' src/dbinc/win_db.h
-
-          cd build_unix
-          ../dist/configure --host=$CROSS --prefix=$PREFIX --enable-mingw \
-            --enable-cxx --disable-shared --disable-replication
+          cd db-5.3.28/build_unix
+          ../dist/configure --prefix=/c/bdb-prefix \
+            --enable-mingw --enable-cxx \
+            --disable-shared --disable-replication
           make -j$(nproc)
           make install
 
-          # Boost
-          cd /tmp
-          wget -q https://archives.boost.io/release/1.83.0/source/boost_1_83_0.tar.gz
-          tar xzf boost_1_83_0.tar.gz
-          cd boost_1_83_0
-          echo "using gcc : mingw : $CROSS-g++ ;" > user-config.jam
-          ./bootstrap.sh
-          ./b2 --user-config=user-config.jam toolset=gcc-mingw target-os=windows \
-            address-model=64 variant=release link=static runtime-link=static \
-            threading=multi threadapi=win32 \
-            --with-system --with-filesystem --with-program_options --with-thread --with-chrono \
-            --prefix=$PREFIX install -j$(nproc) || true
-
-      - name: Build LevelDB for Windows
+      - name: Build LevelDB
         run: |
           cd src/leveldb
-          CC=x86_64-w64-mingw32-gcc CXX=x86_64-w64-mingw32-g++ \
-            TARGET_OS=NATIVE_WINDOWS make libleveldb.a libmemenv.a \
-            OPT="-DOS_WINDOWS -I/tmp/win-prefix/include"
+          TARGET_OS=NATIVE_WINDOWS make libleveldb.a libmemenv.a
+
+      - name: Create Boost compatibility symlinks
+        run: |
+          cd /mingw64/lib
+          for lib in system filesystem program_options thread chrono; do
+            for ext in a dll.a; do
+              src="libboost_${lib}-mt.${ext}"
+              dst="libboost_${lib}.${ext}"
+              [ -f "$src" ] && [ ! -f "$dst" ] && ln -sf "$src" "$dst" || true
+            done
+          done
 
       - name: Build 8bitd.exe (daemon)
         run: |
           cd src
-          sed -i "s|PREFIX=.*|PREFIX=/tmp/win-prefix|" makefile.mingw-cross
-          make -f makefile.mingw-cross -j$(nproc)
-          x86_64-w64-mingw32-strip 8bitd.exe
+          mkdir -p obj-win/crypto
+
+          BDB_PREFIX="/c/bdb-prefix"
+
+          make -f makefile.mingw-cross -j$(nproc) \
+            CROSS="" \
+            PREFIX="/mingw64" \
+            INCLUDEPATHS="-I. -I/mingw64/include -I${BDB_PREFIX}/include" \
+            LIBPATHS="-L/mingw64/lib -L${BDB_PREFIX}/lib"
+
+          strip 8bitd.exe
 
       - name: Build 8bit-qt.exe (GUI wallet)
         run: |
-          export PATH="/tmp/win-prefix/bin:$PATH"
-          # Qt5 cross-compile would require pre-built Qt - use cached binaries if available
-          # For now, only daemon is cross-compiled; Qt wallet requires pre-built Qt5
-          echo "Windows Qt wallet requires pre-built Qt5 cross-compile environment"
-          echo "Including daemon only in this automated build"
+          BDB_PREFIX="/c/bdb-prefix"
+
+          qmake 8bit.pro \
+            "USE_UPNP=-" \
+            "USE_QRCODE=1" \
+            "BDB_INCLUDE_PATH=$BDB_PREFIX/include" \
+            "BDB_LIB_PATH=$BDB_PREFIX/lib" \
+            "BDB_LIB_SUFFIX=-5.3" \
+            "BOOST_LIB_SUFFIX=-mt" \
+            "QMAKE_LFLAGS=-Wl,--dynamicbase -Wl,--nxcompat -static-libgcc -static-libstdc++"
+
+          make -j$(nproc)
+          strip release/8bit-qt.exe 2>/dev/null || strip 8bit-qt.exe 2>/dev/null || true
 
       - name: Package Windows release
         run: |
           mkdir -p 8bit-win64
-          cp src/8bitd.exe 8bit-win64/ 2>/dev/null || true
+          cp src/8bitd.exe 8bit-win64/
+          cp release/8bit-qt.exe 8bit-win64/ 2>/dev/null || \
+            cp 8bit-qt.exe 8bit-win64/ 2>/dev/null || true
           cp COPYING 8bit-win64/
-          # If Qt wallet was built, include it
-          cp release/8bit-qt.exe 8bit-win64/ 2>/dev/null || true
-          cp 8bit-qt.exe 8bit-win64/ 2>/dev/null || true
-          zip -r 8bit-win64.zip 8bit-win64/
+
+          MINGW_BIN="/mingw64/bin"
+          for dll in libgcc_s_seh-1.dll libstdc++-6.dll libwinpthread-1.dll \
+                     libboost_system-mt.dll libboost_filesystem-mt.dll \
+                     libboost_thread-mt.dll libboost_chrono-mt.dll \
+                     libboost_program_options-mt.dll \
+                     libssl-3-x64.dll libcrypto-3-x64.dll \
+                     libminiupnpc.dll libqrencode.dll \
+                     libpng16-16.dll zlib1.dll \
+                     libpcre2-16-0.dll libpcre2-8-0.dll \
+                     libharfbuzz-0.dll libfreetype-6.dll \
+                     libglib-2.0-0.dll libintl-8.dll libiconv-2.dll \
+                     libzstd.dll libbz2-1.dll libbrotlidec.dll libbrotlicommon.dll \
+                     libgraphite2.dll libdouble-conversion.dll; do
+            [ -f "$MINGW_BIN/$dll" ] && cp "$MINGW_BIN/$dll" 8bit-win64/ || true
+          done
+
+          # Bundle Qt5 platform plugin (required for Windows)
+          mkdir -p 8bit-win64/platforms
+          QT_PLUGIN_PATH=$(qmake -query QT_INSTALL_PLUGINS)
+          cp "$QT_PLUGIN_PATH/platforms/qwindows.dll" 8bit-win64/platforms/ 2>/dev/null || true
+
+          mkdir -p 8bit-win64/styles
+          cp "$QT_PLUGIN_PATH/styles/qwindowsvistastyle.dll" 8bit-win64/styles/ 2>/dev/null || true
+
+      - name: Create zip
+        shell: pwsh
+        run: |
+          Compress-Archive -Path 8bit-win64 -DestinationPath 8bit-win64.zip
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
@@ -158,8 +194,122 @@ jobs:
           name: 8bit-win64
           path: 8bit-win64.zip
 
+  build-macos:
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew update
+          brew install boost openssl@1.1 berkeley-db@4 qt@5 miniupnpc qrencode pkg-config
+
+      - name: Build LevelDB
+        run: |
+          cd src/leveldb
+          make libleveldb.a libmemenv.a
+
+      - name: Set up dependency paths
+        id: deps
+        run: |
+          echo "OPENSSL_PREFIX=$(brew --prefix openssl@1.1)" >> $GITHUB_OUTPUT
+          echo "BDB_PREFIX=$(brew --prefix berkeley-db@4)" >> $GITHUB_OUTPUT
+          echo "BOOST_PREFIX=$(brew --prefix boost)" >> $GITHUB_OUTPUT
+          echo "QT_PREFIX=$(brew --prefix qt@5)" >> $GITHUB_OUTPUT
+          echo "HOMEBREW_PREFIX=$(brew --prefix)" >> $GITHUB_OUTPUT
+
+      - name: Create unified deps prefix
+        run: |
+          mkdir -p /tmp/deps/lib /tmp/deps/include
+
+          # Symlink keg-only packages into a single prefix the makefiles can use
+          OPENSSL_PREFIX="${{ steps.deps.outputs.OPENSSL_PREFIX }}"
+          BDB_PREFIX="${{ steps.deps.outputs.BDB_PREFIX }}"
+          BOOST_PREFIX="${{ steps.deps.outputs.BOOST_PREFIX }}"
+          HOMEBREW_PREFIX="${{ steps.deps.outputs.HOMEBREW_PREFIX }}"
+
+          # BDB headers and libs
+          ln -sf "$BDB_PREFIX"/include/* /tmp/deps/include/
+          ln -sf "$BDB_PREFIX"/lib/* /tmp/deps/lib/
+
+          # Create db48 subdirs that makefile.osx expects
+          mkdir -p /tmp/deps/include/db48 /tmp/deps/lib/db48
+          ln -sf "$BDB_PREFIX"/include/* /tmp/deps/include/db48/
+          ln -sf "$BDB_PREFIX"/lib/* /tmp/deps/lib/db48/
+
+          # OpenSSL
+          ln -sf "$OPENSSL_PREFIX"/include/openssl /tmp/deps/include/
+          ln -sf "$OPENSSL_PREFIX"/lib/lib*.a /tmp/deps/lib/
+
+          # Boost
+          ln -sf "$BOOST_PREFIX"/include/boost /tmp/deps/include/
+          ln -sf "$BOOST_PREFIX"/lib/libboost_*.a /tmp/deps/lib/
+          ln -sf "$BOOST_PREFIX"/lib/libboost_*.dylib /tmp/deps/lib/ 2>/dev/null || true
+
+          # qrencode and miniupnpc from main homebrew prefix
+          ln -sf "$HOMEBREW_PREFIX"/include/qrencode.h /tmp/deps/include/ 2>/dev/null || true
+          ln -sf "$HOMEBREW_PREFIX"/lib/libqrencode* /tmp/deps/lib/ 2>/dev/null || true
+          ln -sf "$HOMEBREW_PREFIX"/include/miniupnpc /tmp/deps/include/ 2>/dev/null || true
+          ln -sf "$HOMEBREW_PREFIX"/lib/libminiupnpc* /tmp/deps/lib/ 2>/dev/null || true
+
+      - name: Build 8bitd (daemon)
+        run: |
+          cd src
+          mkdir -p obj/crypto
+
+          make -f makefile.osx -j$(sysctl -n hw.ncpu) \
+            DEPSDIR="/tmp/deps" \
+            STATIC=1 \
+            CXX=g++
+
+          strip 8bitd
+
+      - name: Build 8bit-qt (GUI wallet)
+        run: |
+          QT_PREFIX="${{ steps.deps.outputs.QT_PREFIX }}"
+          OPENSSL_PREFIX="${{ steps.deps.outputs.OPENSSL_PREFIX }}"
+          BDB_PREFIX="${{ steps.deps.outputs.BDB_PREFIX }}"
+          BOOST_PREFIX="${{ steps.deps.outputs.BOOST_PREFIX }}"
+          HOMEBREW_PREFIX="${{ steps.deps.outputs.HOMEBREW_PREFIX }}"
+
+          export PATH="$QT_PREFIX/bin:$PATH"
+
+          qmake 8bit.pro \
+            "USE_UPNP=-" \
+            "USE_QRCODE=1" \
+            "OPENSSL_INCLUDE_PATH=$OPENSSL_PREFIX/include" \
+            "OPENSSL_LIB_PATH=$OPENSSL_PREFIX/lib" \
+            "BDB_INCLUDE_PATH=$BDB_PREFIX/include" \
+            "BDB_LIB_PATH=$BDB_PREFIX/lib" \
+            "BOOST_INCLUDE_PATH=$BOOST_PREFIX/include" \
+            "BOOST_LIB_PATH=$BOOST_PREFIX/lib" \
+            "QRENCODE_INCLUDE_PATH=$HOMEBREW_PREFIX/include" \
+            "QRENCODE_LIB_PATH=$HOMEBREW_PREFIX/lib"
+
+          make -j$(sysctl -n hw.ncpu)
+          strip 8Bit-Qt.app/Contents/MacOS/8Bit-Qt 2>/dev/null || strip 8bit-qt 2>/dev/null || true
+
+      - name: Package macOS release
+        run: |
+          mkdir -p 8bit-macos-x86_64
+          if [ -d "8Bit-Qt.app" ]; then
+            cp -R 8Bit-Qt.app 8bit-macos-x86_64/
+          fi
+          if [ -f "8bit-qt" ] && [ ! -d "8Bit-Qt.app" ]; then
+            cp 8bit-qt 8bit-macos-x86_64/
+          fi
+          cp src/8bitd 8bit-macos-x86_64/
+          cp COPYING 8bit-macos-x86_64/
+          tar czf 8bit-macos-x86_64.tar.gz 8bit-macos-x86_64/
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: 8bit-macos-x86_64
+          path: 8bit-macos-x86_64.tar.gz
+
   release:
-    needs: [build-linux, build-windows]
+    needs: [build-linux, build-windows, build-macos]
     runs-on: ubuntu-22.04
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     permissions:
@@ -176,6 +326,11 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: 8bit-win64
+
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: 8bit-macos-x86_64
 
       - name: Determine version
         id: version
@@ -196,7 +351,8 @@ jobs:
 
             ### Downloads
             - **Linux (x86_64)**: `8bit-linux-x86_64.tar.gz` — GUI wallet (`8bit-qt`) and daemon (`8bitd`)
-            - **Windows (x64)**: `8bit-win64.zip` — Daemon (`8bitd.exe`)
+            - **Windows (x64)**: `8bit-win64.zip` — GUI wallet (`8bit-qt.exe`) and daemon (`8bitd.exe`)
+            - **macOS (x86_64)**: `8bit-macos-x86_64.tar.gz` — GUI wallet (`8Bit-Qt`) and daemon (`8bitd`)
 
             ### Network Info
             - Algorithm: Scrypt (PoW) + Proof of Stake
@@ -205,5 +361,6 @@ jobs:
           files: |
             8bit-linux-x86_64.tar.gz
             8bit-win64.zip
+            8bit-macos-x86_64.tar.gz
           draft: false
           prerelease: false
