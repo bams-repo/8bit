@@ -58,104 +58,149 @@ jobs:
           path: 8bit-linux-x86_64.tar.gz
 
   build-windows:
-    runs-on: windows-latest
-    defaults:
-      run:
-        shell: msys2 {0}
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup MSYS2
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: true
-          install: >-
-            mingw-w64-x86_64-toolchain
-            mingw-w64-x86_64-boost
-            mingw-w64-x86_64-openssl
-            mingw-w64-x86_64-miniupnpc
-            mingw-w64-x86_64-qrencode
-            mingw-w64-x86_64-qt5-base
-            mingw-w64-x86_64-qt5-tools
-            make
-            autoconf
-            automake
-            libtool
-            pkg-config
-
-      - name: Cache Berkeley DB 5.3
-        uses: actions/cache@v4
-        id: bdb-cache
-        with:
-          path: C:/bdb-prefix
-          key: win-bdb53-mingw64-v3
-
-      - name: Build Berkeley DB 5.3
-        if: steps.bdb-cache.outputs.cache-hit != 'true'
+      - name: Install cross-compilation toolchain
         run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential g++-mingw-w64-x86-64 \
+            mingw-w64-x86-64-dev autoconf libtool pkg-config
+
+      - name: Cache Windows dependencies
+        uses: actions/cache@v4
+        id: win-deps-cache
+        with:
+          path: /tmp/win-prefix
+          key: win-deps-v2-${{ runner.os }}
+
+      - name: Build Windows dependencies
+        if: steps.win-deps-cache.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          CROSS=x86_64-w64-mingw32
+          PREFIX=/tmp/win-prefix
+          mkdir -p $PREFIX/lib $PREFIX/include
+
+          # OpenSSL 1.1.1
           cd /tmp
-          curl -fsSL -o db-5.3.28.tar.gz https://download.oracle.com/berkeley-db/db-5.3.28.tar.gz
+          wget -q https://www.openssl.org/source/openssl-1.1.1w.tar.gz
+          tar xzf openssl-1.1.1w.tar.gz
+          cd openssl-1.1.1w
+          ./Configure mingw64 --cross-compile-prefix=$CROSS- --prefix=$PREFIX no-shared no-tests
+          make -j$(nproc)
+          make install_sw
+
+          # Berkeley DB 5.3
+          cd /tmp
+          wget -q https://download.oracle.com/berkeley-db/db-5.3.28.tar.gz
           tar xzf db-5.3.28.tar.gz
           cd db-5.3.28
-
           sed -i 's/#include <WinIoCtl.h>/#include <winioctl.h>/g' src/dbinc/win_db.h
-
           cd build_unix
-          ../dist/configure --prefix=/c/bdb-prefix \
-            --enable-mingw --enable-cxx \
-            --disable-shared --disable-replication \
-            CFLAGS="-Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=implicit-function-declaration" \
-            CXXFLAGS="-Wno-error=incompatible-pointer-types -Wno-error=int-conversion"
+          ../dist/configure --host=$CROSS --prefix=$PREFIX --enable-mingw \
+            --enable-cxx --disable-shared --disable-replication
           make -j$(nproc)
           make install
 
-      - name: Build LevelDB
+          # Boost 1.83
+          cd /tmp
+          wget -q https://archives.boost.io/release/1.83.0/source/boost_1_83_0.tar.gz
+          tar xzf boost_1_83_0.tar.gz
+          cd boost_1_83_0
+          echo "using gcc : mingw : $CROSS-g++ ;" > user-config.jam
+          ./bootstrap.sh
+          ./b2 --user-config=user-config.jam toolset=gcc-mingw target-os=windows \
+            address-model=64 variant=release link=static runtime-link=static \
+            threading=multi threadapi=win32 \
+            --with-system --with-filesystem --with-program_options --with-thread --with-chrono \
+            --prefix=$PREFIX install -j$(nproc) || true
+
+          # miniupnpc
+          cd /tmp
+          wget -q https://miniupnp.tuxfamily.org/files/miniupnpc-2.2.7.tar.gz
+          tar xzf miniupnpc-2.2.7.tar.gz
+          cd miniupnpc-2.2.7
+          CC=$CROSS-gcc AR=$CROSS-ar \
+            CFLAGS="-DWIN32 -D_WIN32_WINNT=0x0501 -DMINIUPNP_STATICLIB" \
+            make -f Makefile libminiupnpc.a
+          mkdir -p $PREFIX/include/miniupnpc
+          cp *.h $PREFIX/include/miniupnpc/
+          cp libminiupnpc.a $PREFIX/lib/
+
+          # qrencode
+          cd /tmp
+          wget -q https://fukuchi.org/works/qrencode/qrencode-4.1.1.tar.gz
+          tar xzf qrencode-4.1.1.tar.gz
+          cd qrencode-4.1.1
+          ./configure --host=$CROSS --prefix=$PREFIX --enable-static --disable-shared --without-tools
+          make -j$(nproc)
+          make install
+
+          # Qt 5.15 (static, cross-compiled)
+          cd /tmp
+          wget -q https://download.qt.io/archive/qt/5.15/5.15.12/submodules/qtbase-everywhere-opensource-src-5.15.12.tar.xz
+          tar xJf qtbase-everywhere-opensource-src-5.15.12.tar.xz
+          cd qtbase-everywhere-src-5.15.12
+          ./configure -prefix $PREFIX/qt5 \
+            -xplatform win32-g++ \
+            -device-option CROSS_COMPILE=$CROSS- \
+            -opensource -confirm-license \
+            -release -static -no-shared \
+            -no-opengl -no-dbus -no-icu -no-feature-sql \
+            -no-feature-testlib -no-feature-concurrent \
+            -nomake examples -nomake tests \
+            -openssl-linked \
+            -I $PREFIX/include -L $PREFIX/lib \
+            OPENSSL_LIBS="-lssl -lcrypto -lws2_32 -lgdi32 -lcrypt32"
+          make -j$(nproc)
+          make install
+
+          # Qt5 tools (lrelease, etc.)
+          cd /tmp
+          wget -q https://download.qt.io/archive/qt/5.15/5.15.12/submodules/qttools-everywhere-opensource-src-5.15.12.tar.xz
+          tar xJf qttools-everywhere-opensource-src-5.15.12.tar.xz
+          cd qttools-everywhere-src-5.15.12
+          $PREFIX/qt5/bin/qmake
+          make -j$(nproc)
+          make install
+
+      - name: Build LevelDB for Windows
         run: |
           cd src/leveldb
-          TARGET_OS=NATIVE_WINDOWS make libleveldb.a libmemenv.a
-
-      - name: Create Boost compatibility symlinks
-        run: |
-          cd /mingw64/lib
-          for lib in system filesystem program_options thread chrono; do
-            for ext in a dll.a; do
-              src="libboost_${lib}-mt.${ext}"
-              dst="libboost_${lib}.${ext}"
-              [ -f "$src" ] && [ ! -f "$dst" ] && ln -sf "$src" "$dst" || true
-            done
-          done
+          CC=x86_64-w64-mingw32-gcc CXX=x86_64-w64-mingw32-g++ \
+            TARGET_OS=NATIVE_WINDOWS make libleveldb.a libmemenv.a \
+            OPT="-DOS_WINDOWS -I/tmp/win-prefix/include"
 
       - name: Build 8bitd.exe (daemon)
         run: |
           cd src
-          mkdir -p obj-win/crypto
-
-          BDB_PREFIX="/c/bdb-prefix"
-
-          make -f makefile.mingw-cross -j$(nproc) \
-            CROSS="" \
-            PREFIX="/mingw64" \
-            INCLUDEPATHS="-I. -I/mingw64/include -I${BDB_PREFIX}/include" \
-            LIBPATHS="-L/mingw64/lib -L${BDB_PREFIX}/lib"
-
-          strip 8bitd.exe
+          sed -i "s|PREFIX=.*|PREFIX=/tmp/win-prefix|" makefile.mingw-cross
+          make -f makefile.mingw-cross -j$(nproc)
+          x86_64-w64-mingw32-strip 8bitd.exe
 
       - name: Build 8bit-qt.exe (GUI wallet)
         run: |
-          BDB_PREFIX="/c/bdb-prefix"
+          PREFIX=/tmp/win-prefix
+          export PATH="$PREFIX/qt5/bin:$PATH"
 
-          qmake 8bit.pro \
+          $PREFIX/qt5/bin/qmake 8bit.pro \
             "USE_UPNP=-" \
             "USE_QRCODE=1" \
-            "BDB_INCLUDE_PATH=$BDB_PREFIX/include" \
-            "BDB_LIB_PATH=$BDB_PREFIX/lib" \
-            "BDB_LIB_SUFFIX=-5.3" \
-            "BOOST_LIB_SUFFIX=-mt" \
-            "QMAKE_LFLAGS=-Wl,--dynamicbase -Wl,--nxcompat -static-libgcc -static-libstdc++"
+            "BDB_INCLUDE_PATH=$PREFIX/include" \
+            "BDB_LIB_PATH=$PREFIX/lib" \
+            "BOOST_INCLUDE_PATH=$PREFIX/include" \
+            "BOOST_LIB_PATH=$PREFIX/lib" \
+            "OPENSSL_INCLUDE_PATH=$PREFIX/include" \
+            "OPENSSL_LIB_PATH=$PREFIX/lib" \
+            "QRENCODE_INCLUDE_PATH=$PREFIX/include" \
+            "QRENCODE_LIB_PATH=$PREFIX/lib" \
+            "BOOST_LIB_SUFFIX=-mt"
 
           make -j$(nproc)
-          strip release/8bit-qt.exe 2>/dev/null || strip 8bit-qt.exe 2>/dev/null || true
+          x86_64-w64-mingw32-strip release/8bit-qt.exe 2>/dev/null || \
+            x86_64-w64-mingw32-strip 8bit-qt.exe 2>/dev/null || true
 
       - name: Package Windows release
         run: |
@@ -164,35 +209,7 @@ jobs:
           cp release/8bit-qt.exe 8bit-win64/ 2>/dev/null || \
             cp 8bit-qt.exe 8bit-win64/ 2>/dev/null || true
           cp COPYING 8bit-win64/
-
-          MINGW_BIN="/mingw64/bin"
-          for dll in libgcc_s_seh-1.dll libstdc++-6.dll libwinpthread-1.dll \
-                     libboost_system-mt.dll libboost_filesystem-mt.dll \
-                     libboost_thread-mt.dll libboost_chrono-mt.dll \
-                     libboost_program_options-mt.dll \
-                     libssl-3-x64.dll libcrypto-3-x64.dll \
-                     libminiupnpc.dll libqrencode.dll \
-                     libpng16-16.dll zlib1.dll \
-                     libpcre2-16-0.dll libpcre2-8-0.dll \
-                     libharfbuzz-0.dll libfreetype-6.dll \
-                     libglib-2.0-0.dll libintl-8.dll libiconv-2.dll \
-                     libzstd.dll libbz2-1.dll libbrotlidec.dll libbrotlicommon.dll \
-                     libgraphite2.dll libdouble-conversion.dll; do
-            [ -f "$MINGW_BIN/$dll" ] && cp "$MINGW_BIN/$dll" 8bit-win64/ || true
-          done
-
-          # Bundle Qt5 platform plugin (required for Windows)
-          mkdir -p 8bit-win64/platforms
-          QT_PLUGIN_PATH=$(qmake -query QT_INSTALL_PLUGINS)
-          cp "$QT_PLUGIN_PATH/platforms/qwindows.dll" 8bit-win64/platforms/ 2>/dev/null || true
-
-          mkdir -p 8bit-win64/styles
-          cp "$QT_PLUGIN_PATH/styles/qwindowsvistastyle.dll" 8bit-win64/styles/ 2>/dev/null || true
-
-      - name: Create zip
-        shell: pwsh
-        run: |
-          Compress-Archive -Path 8bit-win64 -DestinationPath 8bit-win64.zip
+          zip -r 8bit-win64.zip 8bit-win64/
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
@@ -317,23 +334,26 @@ jobs:
   release:
     needs: [build-linux, build-windows, build-macos]
     runs-on: ubuntu-22.04
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    if: always() && (needs.build-linux.result == 'success' || needs.build-windows.result == 'success') && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
 
       - name: Download Linux artifact
+        if: needs.build-linux.result == 'success'
         uses: actions/download-artifact@v4
         with:
           name: 8bit-linux-x86_64
 
       - name: Download Windows artifact
+        if: needs.build-windows.result == 'success'
         uses: actions/download-artifact@v4
         with:
           name: 8bit-win64
 
       - name: Download macOS artifact
+        if: needs.build-macos.result == 'success'
         uses: actions/download-artifact@v4
         with:
           name: 8bit-macos-x86_64
@@ -346,6 +366,15 @@ jobs:
           else
             echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
           fi
+
+      - name: Collect release files
+        id: files
+        run: |
+          FILES=""
+          [ -f "8bit-linux-x86_64.tar.gz" ] && FILES="$FILES 8bit-linux-x86_64.tar.gz"
+          [ -f "8bit-win64.zip" ] && FILES="$FILES 8bit-win64.zip"
+          [ -f "8bit-macos-x86_64.tar.gz" ] && FILES="$FILES 8bit-macos-x86_64.tar.gz"
+          echo "files=$FILES" >> $GITHUB_OUTPUT
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -364,9 +393,6 @@ jobs:
             - Algorithm: Scrypt (PoW) + Proof of Stake
             - Block Time: ~64 seconds
             - Default Port: 18888 / RPC Port: 18889
-          files: |
-            8bit-linux-x86_64.tar.gz
-            8bit-win64.zip
-            8bit-macos-x86_64.tar.gz
+          files: ${{ steps.files.outputs.files }}
           draft: false
           prerelease: false
